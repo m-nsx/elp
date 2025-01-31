@@ -1,0 +1,12 @@
+{
+    "name": "just-one-node",
+    "version": "1.0.0",
+    "description": "Un jeu Just One minimaliste en mode texte pour Node.js",
+    "main": "index.js",
+    "scripts": {
+      "start": "node index.js"
+    },
+    "authors": ["Sawlyer", "mnsx", "Tortouille"],
+    "license": "MIT"
+  }
+  
