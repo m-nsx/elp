@@ -55,9 +55,10 @@ try {
 /**
  * Variables globales pour la partie
  */
-let currentCardIndex = 0;    // index de la carte en cours (0..12)
+let currentCardIndex = SELECTED_CARDS.length - 5;    // index de la carte en cours (0..12) 0 
 let currentActivePlayer = 0; // joueur actif (0..4)
 let score = 0;               // nombre de cartes réussies
+let playerScores = Array(NUM_PLAYERS).fill(0);
 
 /**
  * Lancement du jeu
@@ -118,129 +119,169 @@ function startRound() {
       }
 
       // Sinon, on demande un indice
-      rl.question(`Joueur ${playerIndex + 1}, propose un indice (1 mot valide) : `, (word) => {
-        let cleanedWord = word.trim();
-
-        // Validation : on n'accepte que des lettres (avec accents éventuels) + apostrophes éventuelles
-        while (!isValidWord(cleanedWord)) {
-          console.log("Indice invalide (ce doit être un mot : lettres et accents uniquement). Réessaie.");
-          // On redemande
-          return rl.question(`Joueur ${playerIndex + 1}, re-propose un mot valide : `, (retryWord) => {
-            cleanedWord = retryWord.trim();
-            if (!isValidWord(cleanedWord)) {
-              console.log("Toujours invalide, on enregistre un indice vide.");
-              cleanedWord = "";
-            }
-            proposals.push({ player: playerIndex, word: cleanedWord });
-            nextProposal(playerIndex + 1);
-          });
-        }
-
-        // Si c'est valide, on enregistre
-        proposals.push({ player: playerIndex, word: cleanedWord });
-        // Prochain
+      askForValidWord(playerIndex, (validWord) => {
+        proposals.push({ player: playerIndex, word: validWord });
         nextProposal(playerIndex + 1);
       });
+    }
+
+
+    /**
+     * Fonction générique pour demander un mot valide à un joueur.
+     * @param {number} playerIndex - Index du joueur (de 0 à NUM_PLAYERS - 1)
+     * @param {function} callback - Fonction à exécuter une fois le mot validé
+     */
+    function askForValidWord(playerIndex, callback) {
+      rl.question(`Joueur ${playerIndex + 1}, propose un indice (1 mot valide) : `, (word) => {
+          let cleanedWord = word.trim();
+
+          if (!isValidWord(cleanedWord)) {
+              console.log("Indice invalide (ce doit être un mot : lettres et accents uniquement). Réessaie.");
+              return askForValidWord(playerIndex, callback); // Relance la saisie si invalide
+          }
+
+          callback(cleanedWord); // Appelle la fonction de rappel avec le mot validé
+      });
+    }
+
+    /**
+     * Vérifie si un mot est de la même famille qu'un autre.
+     * Exemple : "Prince" et "Princesse" sont considérés comme identiques.
+     */
+    function isSameFamily(word1, word2) {
+      if (!word1 || !word2) return false;
+    
+      const normalizedWord1 = normalizeWord(word1);
+      const normalizedWord2 = normalizeWord(word2);
+    
+      return normalizedWord1.includes(normalizedWord2) || normalizedWord2.includes(normalizedWord1);
     }
 
     /**
      * Gère la comparaison des indices et la phase de devinette.
      */
     function handleProposalsAndGuess() {
-      // Annulation des doublons (ou quasi-doublons)
-      // 1) On normalise et on détecte les collisions via distance de Levenshtein
-      // Seuil configuré ici (2 ou 3)
-      const THRESHOLD = 2;
+      const THRESHOLD = 2; // Seuil de similarité
 
-      const normalizedWords = proposals.map(p => ({
-        player: p.player,
-        original: p.word,
-        norm: normalizeWord(p.word)
-      }));
 
-      // Détection de ceux qui se ressemblent trop
-      // On va stocker un tableau de "groupes" : tout ce qui est similaire => doublon
-      const invalidSet = new Set(); // contiendra les indices (playerIndex) invalidés
-
-      for (let i = 0; i < normalizedWords.length; i++) {
-        for (let j = i + 1; j < normalizedWords.length; j++) {
-          const wordA = normalizedWords[i];
-          const wordB = normalizedWords[j];
-
-          // Si déjà invalidé, on skip
-          if (invalidSet.has(wordA.player) || invalidSet.has(wordB.player)) {
-            continue;
-          }
-
-          // Calcul de la distance
-          const dist = levenshteinDistance(wordA.norm, wordB.norm);
-          if (dist <= THRESHOLD && wordA.norm.length > 0 && wordB.norm.length > 0) {
-            // => ce sont des "doublons" ou quasi-doublons => on invalide les 2
-            invalidSet.add(wordA.player);
-            invalidSet.add(wordB.player);
-          }
-        }
+      if (!mysteryWord) {
+        console.error("Erreur : mysteryWord est indéfini !");
+        return;
       }
-
-      // On met à jour proposals avec valid = false si dans invalidSet
-      proposals.forEach(p => {
-        p.valid = !invalidSet.has(p.player);
+  
+      const normalizedMysteryWord = normalizeWord(mysteryWord);
+  
+      const normalizedWords = proposals.map(p => ({
+          player: p.player,
+          original: p.word,
+          norm: normalizeWord(p.word)
+      }));
+  
+      const invalidSet = new Set(); // Joueurs dont l'indice est annulé
+  
+      // Vérification des mots identiques
+      const wordCounts = new Map();
+      normalizedWords.forEach(p => {
+          if (!invalidSet.has(p.player)) {
+              wordCounts.set(p.norm, (wordCounts.get(p.norm) || 0) + 1);
+          }
       });
-
+  
+      wordCounts.forEach((count, word) => {
+          if (count > 1) {
+              normalizedWords.forEach(p => {
+                  if (p.norm === word) {
+                      invalidSet.add(p.player);
+                      console.log(`❌ Joueur ${p.player + 1} → "${p.original}" est en double → ANNULÉ`);
+                  }
+              });
+          }
+      });
+  
+      // Vérification des mots de la même famille
+      proposals.forEach(p => {
+          if (!invalidSet.has(p.player)) { 
+              if (isSameFamily(p.norm, normalizedMysteryWord)) {
+                  invalidSet.add(p.player);
+                  console.log(`❌ Joueur ${p.player + 1} → "${p.original}" appartient à la même famille que "${mysteryWord}" → ANNULÉ`);
+              }
+          }
+      });
+  
+      // Comparaison avec le mot mystère
+      normalizedWords.forEach(p => {
+        if (!invalidSet.has(p.player)) { 
+            const distance = levenshteinDistance(p.norm, normalizedMysteryWord);
+            
+            // Vérifie si la distance est proportionnelle à la longueur du mot
+            if (distance <= THRESHOLD && distance < Math.min(p.norm.length, normalizedMysteryWord.length) / 2) {
+                invalidSet.add(p.player);
+                console.log(`❌ Joueur ${p.player + 1} → "${p.original}" est trop proche du mot mystère "${mysteryWord}" → ANNULÉ`);
+            }
+            
+            // Vérifie si le mot contient directement le mot mystère
+            if (p.norm.includes(normalizedMysteryWord) || normalizedMysteryWord.includes(p.norm)) {
+                invalidSet.add(p.player);
+                console.log(`❌ Joueur ${p.player + 1} → "${p.original}" contient le mot mystère "${mysteryWord}" → ANNULÉ`);
+            }
+        }
+      });
+  
+      // Mise à jour des propositions
+      proposals.forEach(p => {
+          p.valid = !invalidSet.has(p.player);
+      });
+  
       // --- Affichage du récapitulatif ---
       console.log("\n--- Résumé des indices proposés ---");
       proposals.forEach(p => {
-        const status = p.valid ? "VALIDE" : "ANNULÉ (doublon ou trop proche)";
-        console.log(`Joueur ${p.player + 1} => "${p.word}" [${status}]`);
+          const status = p.valid ? "VALIDE" : "ANNULÉ (doublon ou trop proche du mot mystère)";
+          console.log(`Joueur ${p.player + 1} => "${p.word}" [${status}]`);
       });
-
+  
       // Phase de devinette
       console.log(`\nJoueur ${currentActivePlayer + 1}, à toi de deviner le mot mystère !`);
       console.log(`(Tape 'p' pour passer, 'q' pour abandonner)`);
       rl.question("Propose un mot : ", (guess) => {
-        guess = guess.trim();
-        let result;
-        if (guess.toLowerCase() === 'p') {
-          // Passe
-          console.log("Tu as choisi de passer. La carte est défaussée.");
-          result = "pass";
-        } else if (guess.toLowerCase() === 'q') {
-          console.log("Abandon de la partie...");
-          // On peut considérer un pass ou un échec, au choix
-          result = "pass";
-        } else if (guess.toLowerCase() === mysteryWord.toLowerCase()) {
-          console.log("Bravo ! Bonne réponse !");
-          score++;
-          result = "success";
-        } else {
-          console.log(`Raté ! La bonne réponse était "${mysteryWord}".`);
-          console.log("On défausse cette carte et on jette aussi la carte suivante de la pioche.");
-          result = "failure";
-        }
-
-        // On enregistre dans le log
-        gameLog.push({
-          roundNumber,
-          chosenCard: card,
-          chosenWordIndex: chosenIndex,
-          proposals: proposals,
-          finalResult: result
-        });
-        saveGameLog();
-
-        // Si échec => on saute la carte suivante
-        if (result === "failure") {
-          currentCardIndex += 2;
-        } else {
-          currentCardIndex += 1;
-        }
-
-        // On passe la main au joueur suivant
-        currentActivePlayer = (currentActivePlayer + 1) % NUM_PLAYERS;
-        // Tour suivant
-        startRound();
+          guess = guess.trim();
+          let result;
+          if (guess.toLowerCase() === 'p') {
+              console.log("Tu as choisi de passer. La carte est défaussée.");
+              result = "pass";
+          } else if (guess.toLowerCase() === 'q') {
+              console.log("Abandon de la partie...");
+              result = "pass";
+          } else if (guess.toLowerCase() === mysteryWord.toLowerCase()) {
+              console.log("Bravo ! Bonne réponse !");
+              score++;
+              playerScores[currentActivePlayer]++;
+              result = "success";
+          } else {
+              console.log(`Raté ! La bonne réponse était "${mysteryWord}".`);
+              console.log("On défausse cette carte et on jette aussi la carte suivante de la pioche.");
+              result = "failure";
+          }
+  
+          // On enregistre dans le log
+          gameLog.push({
+              roundNumber: currentCardIndex + 1,
+              chosenCard: SELECTED_CARDS[currentCardIndex],
+              chosenWordIndex: chosenIndex,
+              proposals: proposals,
+              finalResult: result
+          });
+          saveGameLog();
+  
+          // Si échec => on saute la carte suivante
+          currentCardIndex += (result === "failure") ? 2 : 1;
+  
+          // On passe la main au joueur suivant
+          currentActivePlayer = (currentActivePlayer + 1) % NUM_PLAYERS;
+          startRound();
       });
     }
+  
+  
   });
 }
 
@@ -253,19 +294,14 @@ function endGame() {
   console.log(`Nombre de cartes réussies : ${score}`);
   
   // Petit tableau de score
-  if (score === 13) {
-    console.log("Score parfait ! Félicitations !");
-  } else if (score >= 11) {
-    console.log("Génial !");
-  } else if (score >= 9) {
-    console.log("Waouh, pas mal du tout !");
-  } else if (score >= 7) {
-    console.log("Dans la moyenne, réessayez pour faire mieux !");
-  } else if (score >= 4) {
-    console.log("C’est un bon début. Réessayez !");
-  } else {
-    console.log("Essayez encore...");
-  }
+  console.log("\n🎉 Classement des joueurs 🎉");
+  const classement = playerScores
+      .map((score, index) => ({ joueur: index + 1, score })) // Associe chaque joueur à son score
+      .sort((a, b) => b.score - a.score); // Trie du meilleur au moins bon
+
+  classement.forEach((entry, rank) => {
+      console.log(`${rank + 1}. Joueur ${entry.joueur} - ${entry.score} points`);
+  });
 
   console.log("\nMerci d'avoir joué à Just One (version console améliorée) !");
   rl.close();
@@ -302,12 +338,15 @@ function isValidWord(word) {
  * Normalise un mot : minuscule, supprime accents
  */
 function normalizeWord(word) {
+  if (!word || typeof word !== "string") return ""; 
+
   return word
     .toLowerCase()
-    .normalize("NFD")               // décompose les accents
-    .replace(/[\u0300-\u036f]/g, "") // supprime les diacritiques
-    .replace(/[^a-z]/g, "");         // supprime tout ce qui n'est pas lettre (ex: apostrophe)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z]/g, "");
 }
+
 
 /**
  * Calcule la distance de Levenshtein entre deux chaînes
