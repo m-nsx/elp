@@ -27,7 +27,9 @@ const CARDS = [
   ["Safari", "Hamburger", "Cravate", "Bateau", "Parfum"],
   ["Fantôme", "Planète", "Docteur", "Samouraï", "Désert"],
   ["Zèbre", "Papillon", "Brosse", "Château", "Arc-en-ciel"],
-  // Ajoutez-en plus si besoin...
+  ["Tomate", "Pont", "Verre", "Route", "Balai"],
+  ["Jeu", "Image", "Cylindre", "Lampe", "Magasin"],
+  ["Champs", "Voiture", "Peinture", "Maths", "Idée"]
 ];
 
 // On mélange puis on prend 13 cartes maxi
