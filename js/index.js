@@ -1,22 +1,30 @@
 /**
- * Just One - Jeu textuel amélioré pour Node.js
+ * Just One
  * Auteurs : Sawlyer, mnsx, Tortouille
  */
 
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const readline = require('readline');
 
-/**
- * Pour la saisie en console.
- */
+// Création de l'interface de saisie
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
 
 /**
- * Pseudo-base de cartes : pour la démonstration, chaque carte a 5 mots.
- * On en sélectionnera 13 en mélangeant.
+ * Fonction utilitaire qui pose une question en console et retourne une Promise.
+ * @param {string} query - La question affichée à l'utilisateur.
+ * @returns {Promise<string>} La réponse saisie par l'utilisateur.
+ */
+function askQuestion(query) {
+  return new Promise(resolve => rl.question(query, answer => resolve(answer)));
+}
+
+/**
+ * Pseudo-base de cartes : pour la démonstration, chaque carte contient 5 mots.
+ * On en sélectionne 13 cartes après mélange.
  */
 const CARDS = [
   ["Europe", "Cirque", "Virus", "Crocodile", "Moutarde"],
@@ -27,55 +35,48 @@ const CARDS = [
   ["Safari", "Hamburger", "Cravate", "Bateau", "Parfum"],
   ["Fantôme", "Planète", "Docteur", "Samouraï", "Désert"],
   ["Zèbre", "Papillon", "Brosse", "Château", "Arc-en-ciel"],
-  ["Tomate", "Pont", "Verre", "Route", "Balai"],
-  ["Jeu", "Image", "Cylindre", "Lampe", "Magasin"],
-  ["Champs", "Voiture", "Peinture", "Maths", "Idée"]
+  // Vous pouvez ajouter d'autres cartes ici...
 ];
 
-// On mélange puis on prend 13 cartes maxi
+// On mélange et on sélectionne 13 cartes
 shuffleArray(CARDS);
 const SELECTED_CARDS = CARDS.slice(0, 13);
 
 /**
- * Nombre de joueurs (on reste sur 5, mais vous pouvez adapter).
+ * Nombre de joueurs (ici 5, mais modifiable).
  */
 const NUM_PLAYERS = 5;
 
 /**
- * Journal de partie : on stockera un objet par tour joué.
+ * Journal de partie qui enregistre chaque tour.
  */
 let gameLog = [];
 
-// Tentative de chargement du fichier de log existant
-try {
-  const existingLog = fs.readFileSync('game_log.json', 'utf-8');
-  gameLog = JSON.parse(existingLog);
-} catch (err) {
-  gameLog = [];
+/**
+ * Chargement asynchrone du log existant (s'il existe).
+ */
+async function loadGameLog() {
+  try {
+    const data = await fsPromises.readFile('game_log.json', 'utf-8');
+    gameLog = JSON.parse(data);
+  } catch (err) {
+    gameLog = [];
+  }
 }
 
 /**
- * Variables globales pour la partie
+ * Variables globales de la partie.
  */
-let currentCardIndex = SELECTED_CARDS.length - 5;    // index de la carte en cours (0..12) 0 
-let currentActivePlayer = 0; // joueur actif (0..4)
-let score = 0;               // nombre de cartes réussies
+let currentCardIndex = 0;      // On commence sur la 1ère carte (index 0)
+let currentActivePlayer = 0;   // Le joueur actif (0 à NUM_PLAYERS-1)
+let score = 0;                 // Nombre de cartes réussies
 let playerScores = Array(NUM_PLAYERS).fill(0);
 
 /**
- * Lancement du jeu
+ * Fonction principale qui gère un tour de jeu.
  */
-console.log("Bienvenue dans Just One (version texte améliorée, 5 joueurs).");
-console.log("Appuyez sur Entrée pour commencer.");
-rl.question('', () => {
-  startRound();
-});
-
-/**
- * Fonction principale pour jouer un tour.
- */
-function startRound() {
-  // Vérifie s'il reste des cartes
+async function startRound() {
+  // S'il n'y a plus de cartes, la partie est terminée
   if (currentCardIndex >= SELECTED_CARDS.length) {
     endGame();
     return;
@@ -86,238 +87,223 @@ function startRound() {
   console.log(`(Score actuel : ${score} réussite(s) sur ${currentCardIndex} carte(s) jouée(s))`);
   console.log(`C'est au tour du Joueur ${currentActivePlayer + 1} d'être le joueur actif.`);
 
-  // Afficher les 5 mots de la carte
+  // Affichage de la carte (les 5 mots)
   const card = SELECTED_CARDS[currentCardIndex];
   console.log("Les 5 mots de la carte sont :");
   card.forEach((word, idx) => {
     console.log(`  ${idx + 1}. ${word}`);
   });
 
-  // Demander au joueur actif de choisir un nombre 1..5
-  rl.question(`Joueur ${currentActivePlayer + 1}, choisis un nombre entre 1 et 5 : `, (input) => {
-    let chosenIndex = parseInt(input, 10);
-    if (isNaN(chosenIndex) || chosenIndex < 1 || chosenIndex > 5) {
-      console.log("Entrée invalide, on prend 1 par défaut.");
-      chosenIndex = 1;
-    }
-    const mysteryWord = card[chosenIndex - 1];
-    console.log(`Le mot mystère à deviner est le ${chosenIndex}e mot : (caché pour le joueur actif, mais c'est "${mysteryWord}")`);
+  // Le joueur actif choisit un nombre entre 1 et 5
+  let input = await askQuestion(`Joueur ${currentActivePlayer + 1}, choisis un nombre entre 1 et 5 : `);
+  let chosenIndex = parseInt(input, 10);
+  if (isNaN(chosenIndex) || chosenIndex < 1 || chosenIndex > 5) {
+    console.log("Entrée invalide, on prend 1 par défaut.");
+    chosenIndex = 1;
+  }
+  const mysteryWord = card[chosenIndex - 1];
+  console.log(`Le mot mystère à deviner est le ${chosenIndex}e mot : (caché pour le joueur actif, mais c'est "${mysteryWord}")`);
 
-    // Recueillir les indices des autres joueurs
-    const proposals = [];
-    nextProposal(0);
+  // Recueillir les indices des autres joueurs
+  let proposals = [];
+  for (let playerIndex = 0; playerIndex < NUM_PLAYERS; playerIndex++) {
+    if (playerIndex === currentActivePlayer) continue; // On ignore le joueur actif
+    const validWord = await askForValidWord(playerIndex);
+    proposals.push({ player: playerIndex, word: validWord });
+  }
 
-    function nextProposal(playerIndex) {
-      // Si on a dépassé le nombre de joueurs, on passe à la phase de comparaison
-      if (playerIndex >= NUM_PLAYERS) {
-        handleProposalsAndGuess();
-        return;
-      }
-
-      // Si c'est le joueur actif, on skip
-      if (playerIndex === currentActivePlayer) {
-        nextProposal(playerIndex + 1);
-        return;
-      }
-
-      // Sinon, on demande un indice
-      askForValidWord(playerIndex, (validWord) => {
-        proposals.push({ player: playerIndex, word: validWord });
-        nextProposal(playerIndex + 1);
-      });
-    }
-
-
-    /**
-     * Fonction générique pour demander un mot valide à un joueur.
-     * @param {number} playerIndex - Index du joueur (de 0 à NUM_PLAYERS - 1)
-     * @param {function} callback - Fonction à exécuter une fois le mot validé
-     */
-    function askForValidWord(playerIndex, callback) {
-      rl.question(`Joueur ${playerIndex + 1}, propose un indice (1 mot valide) : `, (word) => {
-          let cleanedWord = word.trim();
-
-          if (!isValidWord(cleanedWord)) {
-              console.log("Indice invalide (ce doit être un mot : lettres et accents uniquement). Réessaie.");
-              return askForValidWord(playerIndex, callback); // Relance la saisie si invalide
-          }
-
-          callback(cleanedWord); // Appelle la fonction de rappel avec le mot validé
-      });
-    }
-
-    /**
-     * Vérifie si un mot est de la même famille qu'un autre.
-     * Exemple : "Prince" et "Princesse" sont considérés comme identiques.
-     */
-    function isSameFamily(word1, word2) {
-      if (!word1 || !word2) return false;
-    
-      const normalizedWord1 = normalizeWord(word1);
-      const normalizedWord2 = normalizeWord(word2);
-    
-      return normalizedWord1.includes(normalizedWord2) || normalizedWord2.includes(normalizedWord1);
-    }
-
-    /**
-     * Gère la comparaison des indices et la phase de devinette.
-     */
-    function handleProposalsAndGuess() {
-      const THRESHOLD = 2; // Seuil de similarité
-
-
-      if (!mysteryWord) {
-        console.error("Erreur : mysteryWord est indéfini !");
-        return;
-      }
-  
-      const normalizedMysteryWord = normalizeWord(mysteryWord);
-  
-      const normalizedWords = proposals.map(p => ({
-          player: p.player,
-          original: p.word,
-          norm: normalizeWord(p.word)
-      }));
-  
-      const invalidSet = new Set(); // Joueurs dont l'indice est annulé
-  
-      // Vérification des mots identiques
-      const wordCounts = new Map();
-      normalizedWords.forEach(p => {
-          if (!invalidSet.has(p.player)) {
-              wordCounts.set(p.norm, (wordCounts.get(p.norm) || 0) + 1);
-          }
-      });
-  
-      wordCounts.forEach((count, word) => {
-          if (count > 1) {
-              normalizedWords.forEach(p => {
-                  if (p.norm === word) {
-                      invalidSet.add(p.player);
-                      console.log(`❌ Joueur ${p.player + 1} → "${p.original}" est en double → ANNULÉ`);
-                  }
-              });
-          }
-      });
-  
-      // Vérification des mots de la même famille
-      proposals.forEach(p => {
-          if (!invalidSet.has(p.player)) { 
-              if (isSameFamily(p.norm, normalizedMysteryWord)) {
-                  invalidSet.add(p.player);
-                  console.log(`❌ Joueur ${p.player + 1} → "${p.original}" appartient à la même famille que "${mysteryWord}" → ANNULÉ`);
-              }
-          }
-      });
-  
-      // Comparaison avec le mot mystère
-      normalizedWords.forEach(p => {
-        if (!invalidSet.has(p.player)) { 
-            const distance = levenshteinDistance(p.norm, normalizedMysteryWord);
-            
-            // Vérifie si la distance est proportionnelle à la longueur du mot
-            if (distance <= THRESHOLD && distance < Math.min(p.norm.length, normalizedMysteryWord.length) / 2) {
-                invalidSet.add(p.player);
-                console.log(`❌ Joueur ${p.player + 1} → "${p.original}" est trop proche du mot mystère "${mysteryWord}" → ANNULÉ`);
-            }
-            
-            // Vérifie si le mot contient directement le mot mystère
-            if (p.norm.includes(normalizedMysteryWord) || normalizedMysteryWord.includes(p.norm)) {
-                invalidSet.add(p.player);
-                console.log(`❌ Joueur ${p.player + 1} → "${p.original}" contient le mot mystère "${mysteryWord}" → ANNULÉ`);
-            }
-        }
-      });
-  
-      // Mise à jour des propositions
-      proposals.forEach(p => {
-          p.valid = !invalidSet.has(p.player);
-      });
-  
-      // --- Affichage du récapitulatif ---
-      console.log("\n--- Résumé des indices proposés ---");
-      proposals.forEach(p => {
-          const status = p.valid ? "VALIDE" : "ANNULÉ (doublon ou trop proche du mot mystère)";
-          console.log(`Joueur ${p.player + 1} => "${p.word}" [${status}]`);
-      });
-  
-      // Phase de devinette
-      console.log(`\nJoueur ${currentActivePlayer + 1}, à toi de deviner le mot mystère !`);
-      console.log(`(Tape 'p' pour passer, 'q' pour abandonner)`);
-      rl.question("Propose un mot : ", (guess) => {
-          guess = guess.trim();
-          let result;
-          if (guess.toLowerCase() === 'p') {
-              console.log("Tu as choisi de passer. La carte est défaussée.");
-              result = "pass";
-          } else if (guess.toLowerCase() === 'q') {
-              console.log("Abandon de la partie...");
-              result = "pass";
-          } else if (guess.toLowerCase() === mysteryWord.toLowerCase()) {
-              console.log("Bravo ! Bonne réponse !");
-              score++;
-              playerScores[currentActivePlayer]++;
-              result = "success";
-          } else {
-              console.log(`Raté ! La bonne réponse était "${mysteryWord}".`);
-              console.log("On défausse cette carte et on jette aussi la carte suivante de la pioche.");
-              result = "failure";
-          }
-  
-          // On enregistre dans le log
-          gameLog.push({
-              roundNumber: currentCardIndex + 1,
-              chosenCard: SELECTED_CARDS[currentCardIndex],
-              chosenWordIndex: chosenIndex,
-              proposals: proposals,
-              finalResult: result
-          });
-          saveGameLog();
-  
-          // Si échec => on saute la carte suivante
-          currentCardIndex += (result === "failure") ? 2 : 1;
-  
-          // On passe la main au joueur suivant
-          currentActivePlayer = (currentActivePlayer + 1) % NUM_PLAYERS;
-          startRound();
-      });
-    }
-  
-  
-  });
+  // Gestion des propositions et de la phase de devinette
+  await handleProposalsAndGuess(proposals, mysteryWord, chosenIndex, card);
 }
 
 /**
- * Fin de partie
+ * Demande à un joueur de proposer un indice (mot valide).
+ * En cas d'indice invalide, la fonction se relance récursivement.
+ * @param {number} playerIndex - Numéro du joueur (0 à NUM_PLAYERS-1)
+ * @returns {Promise<string>} Le mot saisi et validé.
+ */
+async function askForValidWord(playerIndex) {
+  let word = await askQuestion(`Joueur ${playerIndex + 1}, propose un indice (1 mot valide) : `);
+  let cleanedWord = word.trim();
+  if (!isValidWord(cleanedWord)) {
+    console.log("Indice invalide (il doit être composé de lettres et accents uniquement). Réessaie.");
+    return await askForValidWord(playerIndex);
+  }
+  return cleanedWord;
+}
+
+/**
+ * Gère la phase de comparaison des indices et la tentative de réponse du joueur actif.
+ * @param {Array} proposals - Tableau des propositions {player, word}
+ * @param {string} mysteryWord - Le mot mystère à deviner
+ * @param {number} chosenIndex - L'indice choisi par le joueur actif (entre 1 et 5)
+ * @param {Array} card - La carte complète (les 5 mots)
+ */
+async function handleProposalsAndGuess(proposals, mysteryWord, chosenIndex, card) {
+  const THRESHOLD = 2;
+  if (!mysteryWord) {
+    console.error("Erreur : mysteryWord est indéfini !");
+    return;
+  }
+  const normalizedMysteryWord = normalizeWord(mysteryWord);
+
+  const normalizedWords = proposals.map(p => ({
+    player: p.player,
+    original: p.word,
+    norm: normalizeWord(p.word)
+  }));
+
+  const invalidSet = new Set();
+
+  // Vérification des indices identiques (doublons)
+  const wordCounts = new Map();
+  normalizedWords.forEach(p => {
+    wordCounts.set(p.norm, (wordCounts.get(p.norm) || 0) + 1);
+  });
+  wordCounts.forEach((count, word) => {
+    if (count > 1) {
+      normalizedWords.forEach(p => {
+        if (p.norm === word) {
+          invalidSet.add(p.player);
+          console.log(`❌ Joueur ${p.player + 1} → "${p.original}" est en double → ANNULÉ`);
+        }
+      });
+    }
+  });
+
+  // Vérification des mots de la même famille que le mot mystère
+  normalizedWords.forEach(p => {
+    if (!invalidSet.has(p.player)) {
+      if (isSameFamily(p.norm, normalizedMysteryWord)) {
+        invalidSet.add(p.player);
+        console.log(`❌ Joueur ${p.player + 1} → "${p.original}" appartient à la même famille que "${mysteryWord}" → ANNULÉ`);
+      }
+    }
+  });
+
+  // Vérification de la proximité (distance de Levenshtein)
+  normalizedWords.forEach(p => {
+    if (!invalidSet.has(p.player)) {
+      const distance = levenshteinDistance(p.norm, normalizedMysteryWord);
+      if (distance <= THRESHOLD && distance < Math.min(p.norm.length, normalizedMysteryWord.length) / 2) {
+        invalidSet.add(p.player);
+        console.log(`❌ Joueur ${p.player + 1} → "${p.original}" est trop proche du mot mystère "${mysteryWord}" → ANNULÉ`);
+      }
+      // Vérification si le mot contient directement ou de façon « fuzzy » le mot mystère
+      if (p.norm.includes(normalizedMysteryWord) ||
+          normalizedMysteryWord.includes(p.norm) ||
+          containsFuzzy(p.norm, normalizedMysteryWord, 1)) {
+        invalidSet.add(p.player);
+        console.log(`❌ Joueur ${p.player + 1} → "${p.original}" contient le mot mystère "${mysteryWord}" → ANNULÉ`);
+      }
+    }
+  });
+
+  // Mise à jour des propositions (validité)
+  proposals.forEach(p => {
+    p.valid = !invalidSet.has(p.player);
+  });
+
+  // Affichage du récapitulatif des indices proposés
+  console.log("\n--- Résumé des indices proposés ---");
+  proposals.forEach(p => {
+    const status = p.valid ? "VALIDE" : "ANNULÉ (doublon, trop proche ou contenant le mot mystère)";
+    console.log(`Joueur ${p.player + 1} => "${p.word}" [${status}]`);
+  });
+
+  // Phase de devinette du joueur actif
+  console.log(`\nJoueur ${currentActivePlayer + 1}, à toi de deviner le mot mystère !`);
+  console.log(`(Tape 'p' pour passer, 'q' pour abandonner)`);
+  let guess = await askQuestion("Propose un mot : ");
+  guess = guess.trim();
+  let result;
+  if (guess.toLowerCase() === 'p' || guess.toLowerCase() === 'q') {
+    console.log("Tu as choisi de passer. La carte est défaussée.");
+    result = "pass";
+  } else if (guess.toLowerCase() === mysteryWord.toLowerCase()) {
+    console.log("Bravo ! Bonne réponse !");
+    score++;
+    playerScores[currentActivePlayer]++;
+    result = "success";
+  } else {
+    console.log(`Raté ! La bonne réponse était "${mysteryWord}".`);
+    console.log("On défausse cette carte et on jette aussi la carte suivante de la pioche.");
+    result = "failure";
+  }
+
+  // Enregistrement du tour dans le journal de partie
+  gameLog.push({
+    roundNumber: currentCardIndex + 1,
+    chosenCard: card,
+    chosenWordIndex: chosenIndex,
+    proposals: proposals,
+    finalResult: result
+  });
+  await saveGameLog();
+
+  // Mise à jour de l'index de carte :
+  // En cas d'échec, on passe la carte suivante également.
+  currentCardIndex += (result === "failure") ? 2 : 1;
+
+  // Passage au joueur suivant
+  currentActivePlayer = (currentActivePlayer + 1) % NUM_PLAYERS;
+  await startRound();
+}
+
+/**
+ * Vérifie si la chaîne "proposed" contient une sous-chaîne (de longueur égale à "mystery")
+ * dont la distance de Levenshtein est inférieure ou égale à maxDistance.
+ * @param {string} proposed - Le mot proposé (normalisé)
+ * @param {string} mystery - Le mot mystère (normalisé)
+ * @param {number} maxDistance - Distance maximale autorisée (ex. 1)
+ * @returns {boolean} true si une sous-chaîne est trop proche du mot mystère
+ */
+function containsFuzzy(proposed, mystery, maxDistance = 1) {
+  if (proposed.length < mystery.length) return false;
+  for (let i = 0; i <= proposed.length - mystery.length; i++) {
+    const substring = proposed.substring(i, i + mystery.length);
+    if (levenshteinDistance(substring, mystery) <= maxDistance) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Fin de partie : affichage du score et classement.
  */
 function endGame() {
   console.log("\n===== Fin de la partie ! =====");
   console.log(`Cartes totales jouées : ${currentCardIndex} (sur un max de 13).`);
   console.log(`Nombre de cartes réussies : ${score}`);
   
-  // Petit tableau de score
   console.log("\n🎉 Classement des joueurs 🎉");
   const classement = playerScores
-      .map((score, index) => ({ joueur: index + 1, score })) // Associe chaque joueur à son score
-      .sort((a, b) => b.score - a.score); // Trie du meilleur au moins bon
-
+    .map((score, index) => ({ joueur: index + 1, score }))
+    .sort((a, b) => b.score - a.score);
+  
   classement.forEach((entry, rank) => {
-      console.log(`${rank + 1}. Joueur ${entry.joueur} - ${entry.score} points`);
+    console.log(`${rank + 1}. Joueur ${entry.joueur} - ${entry.score} points`);
   });
-
+  
   console.log("\nMerci d'avoir joué à Just One (version console améliorée) !");
   rl.close();
 }
 
 /**
- * Sauvegarde du log
+ * Sauvegarde asynchrone du journal de partie dans un fichier JSON.
  */
-function saveGameLog() {
-  fs.writeFileSync('game_log.json', JSON.stringify(gameLog, null, 2), 'utf-8');
+async function saveGameLog() {
+  try {
+    await fsPromises.writeFile('game_log.json', JSON.stringify(gameLog, null, 2), 'utf-8');
+  } catch (err) {
+    console.error("Erreur lors de la sauvegarde du log :", err);
+  }
 }
 
 /**
- * Mélange un tableau (Fisher-Yates)
+ * Mélange un tableau en utilisant l'algorithme Fisher-Yates.
+ * @param {Array} array - Le tableau à mélanger.
  */
 function shuffleArray(array) {
   for (let i = array.length - 1; i > 0; i--) {
@@ -327,21 +313,21 @@ function shuffleArray(array) {
 }
 
 /**
- * Vérifie qu'un mot est "valide" : lettres + accents
- * (On peut autoriser l'apostrophe, tiret... selon vos besoins)
+ * Vérifie qu'un mot est "valide" : il doit être composé uniquement de lettres (avec accents) et d'apostrophes.
+ * @param {string} word - Le mot à vérifier.
+ * @returns {boolean} true si le mot est valide, false sinon.
  */
 function isValidWord(word) {
-  // Autorise lettres (A-Z, a-z), éventuellement accents latins
-  // On autorise également l'apostrophe
   return /^[a-zA-ZÀ-ÖÙ-öù-ÿ'-]+$/.test(word) && word.trim().length > 0;
 }
 
 /**
- * Normalise un mot : minuscule, supprime accents
+ * Normalise un mot en le mettant en minuscule et en supprimant les accents.
+ * @param {string} word - Le mot à normaliser.
+ * @returns {string} Le mot normalisé.
  */
 function normalizeWord(word) {
-  if (!word || typeof word !== "string") return ""; 
-
+  if (!word || typeof word !== "string") return "";
   return word
     .toLowerCase()
     .normalize("NFD")
@@ -349,28 +335,37 @@ function normalizeWord(word) {
     .replace(/[^a-z]/g, "");
 }
 
+/**
+ * Vérifie si deux mots appartiennent à la même famille (ex. "Prince" et "Princesse").
+ * @param {string} word1 
+ * @param {string} word2 
+ * @returns {boolean} true si les mots sont considérés comme de la même famille.
+ */
+function isSameFamily(word1, word2) {
+  if (!word1 || !word2) return false;
+  const normalizedWord1 = normalizeWord(word1);
+  const normalizedWord2 = normalizeWord(word2);
+  return normalizedWord1.includes(normalizedWord2) || normalizedWord2.includes(normalizedWord1);
+}
 
 /**
- * Calcule la distance de Levenshtein entre deux chaînes
- * (version simple, vous pouvez utiliser un package NPM "fast-levenshtein" ou "natural")
+ * Calcule la distance de Levenshtein entre deux chaînes.
+ * @param {string} a 
+ * @param {string} b 
+ * @returns {number} La distance de Levenshtein.
  */
 function levenshteinDistance(a, b) {
-  // Si l'une est vide, la distance = longueur de l'autre
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
-
-  // Création matrice
+  
   const matrix = [];
-
-  // Initialisation
   for (let i = 0; i <= b.length; i++) {
     matrix[i] = [i];
   }
   for (let j = 0; j <= a.length; j++) {
     matrix[0][j] = j;
   }
-
-  // Remplissage
+  
   for (let i = 1; i <= b.length; i++) {
     for (let j = 1; j <= a.length; j++) {
       if (b.charAt(i - 1) === a.charAt(j - 1)) {
@@ -384,6 +379,17 @@ function levenshteinDistance(a, b) {
       }
     }
   }
-
   return matrix[b.length][a.length];
 }
+
+/**
+ * Fonction principale qui initialise le log puis démarre la partie.
+ */
+async function main() {
+  await loadGameLog();
+  console.log("Bienvenue dans Just One (version texte améliorée, 5 joueurs).");
+  await askQuestion("Appuyez sur Entrée pour commencer.");
+  await startRound();
+}
+
+main();

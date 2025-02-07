@@ -7,7 +7,7 @@ Cette version console permet de jouer à **5 joueurs** en se partageant un clavi
 
 1. Le joueur actif choisit un **mot mystère** parmi une liste de 5 mots.
 2. Les **autres joueurs** proposent un **indice** (un mot uniquement).
-3. Les **indices identiques ou trop similaires** sont **annulés**.
+3. Les **indices identiques trop proches ou contenant (même de façon approximative)** sont **annulés**.
 4. Le joueur actif **tente de deviner** le mot mystère.
 5. La partie continue jusqu'à **13 cartes jouées**, avec un **score final**.
 
